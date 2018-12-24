@@ -16,10 +16,6 @@
 #import <objc/runtime.h>
 #import <UIKit/UIKit.h>
 
-#if _INTERNAL_MLF_RC_ENABLED
-#import <FBRetainCycleDetector/FBRetainCycleDetector.h>
-#endif
-
 static const void *const kViewStackKey = &kViewStackKey;
 static const void *const kParentPtrsKey = &kParentPtrsKey;
 const void *const kLatestSenderKey = &kLatestSenderKey;
@@ -27,7 +23,7 @@ const void *const kLatestSenderKey = &kLatestSenderKey;
 @implementation NSObject (MemoryLeak)
 
 - (BOOL)willDealloc {
-    NSString *className = NSStringFromClass([self class]);
+    NSString *className = [self getRealClassNameOfObject:self];
     if ([[NSObject classNamesWhitelist] containsObject:className])
         return NO;
     
@@ -50,7 +46,7 @@ const void *const kLatestSenderKey = &kLatestSenderKey;
     }
     [MLeakedObjectProxy addLeakedObject:self];
     
-    NSString *className = NSStringFromClass([self class]);
+    NSString *className = [self getRealClassNameOfObject:self];
     NSLog(@"Possibly Memory Leak.\nIn case that %@ should not be dealloced, override -willDealloc in %@ by returning NO.\nView-ViewController stack: %@", className, className, [self viewStack]);
 }
 
@@ -58,7 +54,7 @@ const void *const kLatestSenderKey = &kLatestSenderKey;
     if ([relationship hasPrefix:@"self"]) {
         relationship = [relationship stringByReplacingCharactersInRange:NSMakeRange(0, 4) withString:@""];
     }
-    NSString *className = NSStringFromClass([object class]);
+    NSString *className = [self getRealClassNameOfObject:object];
     className = [NSString stringWithFormat:@"%@(%@), ", relationship, className];
     
     [object setViewStack:[[self viewStack] arrayByAddingObject:className]];
@@ -78,7 +74,7 @@ const void *const kLatestSenderKey = &kLatestSenderKey;
     NSArray *viewStack = [self viewStack];
     NSSet *parentPtrs = [self parentPtrs];
     for (id child in children) {
-        NSString *className = NSStringFromClass([child class]);
+        NSString *className = [self getRealClassNameOfObject:child];
         [child setViewStack:[viewStack arrayByAddingObject:className]];
         [child setParentPtrs:[parentPtrs setByAddingObject:@((uintptr_t)child)]];
         [child willDealloc];
@@ -91,7 +87,7 @@ const void *const kLatestSenderKey = &kLatestSenderKey;
         return viewStack;
     }
     
-    NSString *className = NSStringFromClass([self class]);
+    NSString *className = [self getRealClassNameOfObject:self];
     return @[ className ];
 }
 
@@ -109,6 +105,10 @@ const void *const kLatestSenderKey = &kLatestSenderKey;
 
 - (void)setParentPtrs:(NSSet *)parentPtrs {
     objc_setAssociatedObject(self, kParentPtrsKey, parentPtrs, OBJC_ASSOCIATION_RETAIN);
+}
+
+- (NSString *)getRealClassNameOfObject:(id)type {
+    return [NSStringFromClass([type class]) componentsSeparatedByString:@"."].lastObject;
 }
 
 + (NSMutableSet *)classNamesWhitelist {
@@ -137,17 +137,6 @@ const void *const kLatestSenderKey = &kLatestSenderKey;
 
 + (void)swizzleSEL:(SEL)originalSEL withSEL:(SEL)swizzledSEL {
 #if _INTERNAL_MLF_ENABLED
-    
-#if _INTERNAL_MLF_RC_ENABLED
-    // Just find a place to set up FBRetainCycleDetector.
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [FBAssociationManager hook];
-        });
-    });
-#endif
-    
     Class class = [self class];
     
     Method originalMethod = class_getInstanceMethod(class, originalSEL);
